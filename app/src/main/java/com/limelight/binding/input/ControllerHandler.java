@@ -1238,7 +1238,17 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         case KeyEvent.KEYCODE_BUTTON_MODE:
             context.inputMap &= ~ControllerPacket.SPECIAL_BUTTON_FLAG;
             break;
+                
+        case KeyEvent.KEYCODE_SEARCH:
+            toggleMouseEmulation(context);
+            break;
+        case KeyEvent.KEYCODE_BUTTON_16:
+             break;
+                
         case KeyEvent.KEYCODE_BUTTON_START:
+            context.inputMap &= ~ControllerPacket.PLAY_FLAG;
+            break;
+                
         case KeyEvent.KEYCODE_MENU:
             // Sometimes we'll get a spurious key up event on controller disconnect.
             // Make sure it's real by checking that the key is actually down before taking
@@ -1365,7 +1375,15 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         case KeyEvent.KEYCODE_BUTTON_MODE:
             context.inputMap |= ControllerPacket.SPECIAL_BUTTON_FLAG;
             break;
+                
+        case KeyEvent.KEYCODE_SEARCH:
+            break;
+        case KeyEvent.KEYCODE_BUTTON_16:
+             break;
+                
         case KeyEvent.KEYCODE_BUTTON_START:
+             context.inputMap |= ControllerPacket.PLAY_FLAG;
+             break;
         case KeyEvent.KEYCODE_MENU:
             if (event.getRepeatCount() == 0) {
                 context.startDownTime = SystemClock.uptimeMillis();
