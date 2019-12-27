@@ -19,6 +19,7 @@ import com.limelight.nvstream.NvConnectionListener;
 import com.limelight.nvstream.StreamConfiguration;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
+import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.input.KeyboardPacket;
 import com.limelight.nvstream.input.MouseButtonPacket;
 import com.limelight.nvstream.jni.MoonBridge;
@@ -71,12 +72,33 @@ import android.widget.FrameLayout;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.TextView;
 import android.widget.Toast;
+import java.io.*;
+import android.os.AsyncTask;
+import com.limelight.nvstream.http.ComputerDetails;
+import com.limelight.nvstream.wol.WakeOnLanSender;
+
+
 
 import java.io.ByteArrayInputStream;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Locale;
+
+class QuitAppTask extends AsyncTask<NvConnection, Void, Long> {
+
+    private Exception exception;
+
+    long result = 0;
+
+    protected Long doInBackground(NvConnection... conn) {
+        try {
+            conn[0].quitApp();
+        } catch (Exception e) {
+        }
+        return result;
+    }
+}
 
 
 public class Game extends Activity implements SurfaceHolder.Callback,
@@ -129,6 +151,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     private WifiManager.WifiLock highPerfWifiLock;
     private WifiManager.WifiLock lowLatencyWifiLock;
+    
+    private boolean showDialogs = true;
 
     private boolean connectedToUsbDriverService = false;
     private ServiceConnection usbDriverServiceConnection = new ServiceConnection() {
@@ -153,6 +177,16 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     public static final String EXTRA_PC_NAME = "PcName";
     public static final String EXTRA_APP_HDR = "HDR";
     public static final String EXTRA_SERVER_CERT = "ServerCert";
+    public static final String EXTRA_GAME_FILE = "GameFile";
+
+    private String host = new String();;
+    private String appName = new String();
+    private int appId = 0;
+    private String uniqueId = new String();
+    private boolean remote = false;
+    private String uuid = new String();
+    private String pcName = new String();
+    private String pcMac = new String();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -191,9 +225,15 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // Inflate the content
         setContentView(R.layout.activity_game);
+        
+        // Check if game_file parameter was passed
+        // If it was then don't show dialogs
+        String gameFile = Game.this.getIntent().getStringExtra(EXTRA_GAME_FILE);
+        if(gameFile != null) showDialogs = false;
 
         // Start the spinner
-        spinner = SpinnerDialog.displayDialog(this, getResources().getString(R.string.conn_establishing_title),
+        if (showDialogs)
+            spinner = SpinnerDialog.displayDialog(this, getResources().getString(R.string.conn_establishing_title),
                 getResources().getString(R.string.conn_establishing_msg), true);
 
         // Read the stream preferences
@@ -249,14 +289,40 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             lowLatencyWifiLock.acquire();
         }
 
-        String host = Game.this.getIntent().getStringExtra(EXTRA_HOST);
-        String appName = Game.this.getIntent().getStringExtra(EXTRA_APP_NAME);
-        int appId = Game.this.getIntent().getIntExtra(EXTRA_APP_ID, StreamConfiguration.INVALID_APP_ID);
-        String uniqueId = Game.this.getIntent().getStringExtra(EXTRA_UNIQUEID);
-        String uuid = Game.this.getIntent().getStringExtra(EXTRA_PC_UUID);
-        String pcName = Game.this.getIntent().getStringExtra(EXTRA_PC_NAME);
         boolean willStreamHdr = Game.this.getIntent().getBooleanExtra(EXTRA_APP_HDR, false);
         byte[] derCertData = Game.this.getIntent().getByteArrayExtra(EXTRA_SERVER_CERT);
+        
+        if(gameFile != null)
+        {
+            File gamefile = new File(gameFile);
+            try {
+                BufferedReader in = new BufferedReader(new FileReader(gamefile.getAbsolutePath()));
+                appName = in.readLine();
+                appId = Integer.parseInt(in.readLine());
+                host = in.readLine();
+                uniqueId = in.readLine();
+                uuid = in.readLine();
+                pcName = in.readLine();
+                pcMac = in.readLine();
+                in.close();
+            } catch (Exception e) {
+                Toast.makeText(this, "Could not open game file", Toast.LENGTH_LONG).show();
+            }
+
+            ComputerDetails computer = new ComputerDetails();
+            computer.macAddress = pcMac;
+            computer.remoteAddress = host;
+            doWakeOnLan(computer);
+        }
+        else
+        {
+            host = Game.this.getIntent().getStringExtra(EXTRA_HOST);
+            appName = Game.this.getIntent().getStringExtra(EXTRA_APP_NAME);
+            appId = Game.this.getIntent().getIntExtra(EXTRA_APP_ID, StreamConfiguration.INVALID_APP_ID);
+            uniqueId = Game.this.getIntent().getStringExtra(EXTRA_UNIQUEID);
+            uuid = Game.this.getIntent().getStringExtra(EXTRA_PC_UUID);
+            pcName = Game.this.getIntent().getStringExtra(EXTRA_PC_NAME);
+        }
 
         X509Certificate serverCert = null;
         try {
@@ -591,6 +657,19 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }
         }
     }
+    
+    private void doWakeOnLan(final ComputerDetails computer) {
+        new Thread(new Runnable() {
+        @Override
+        public void run() {
+            String message;
+            try {
+                    WakeOnLanSender.sendWolPacket(computer);
+                } catch (IOException e) {
+                }
+            }
+        }).start();
+    }
 
     private float prepareDisplayForRendering() {
         Display display = getWindowManager().getDefaultDisplay();
@@ -791,12 +870,21 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // Destroy the capture provider
         inputCaptureProvider.destroy();
     }
+    
+    @Override
+    protected void onPause() {
+        super.onPause();
+
+        this.finishAffinity();
+    }
 
     @Override
     protected void onStop() {
         super.onStop();
 
-        SpinnerDialog.closeDialogs(this);
+        new QuitAppTask().execute(conn);
+
+        if(showDialogs) SpinnerDialog.closeDialogs(this);
         Dialog.closeDialogs();
 
         if (virtualController != null) {
@@ -835,7 +923,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 }
             }
 
-            if (message != null) {
+            if (message != null  && showDialogs) {
                 Toast.makeText(this, message, Toast.LENGTH_LONG).show();
             }
 
@@ -966,6 +1054,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
             return true;
         }
+        
+        // Check for quit key
+        if(event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_16) this.finishAffinity();
 
         boolean handled = false;
 
@@ -1390,7 +1481,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         Toast.makeText(Game.this, "Video decoder failed to initialize. Your device may not support the selected resolution.", Toast.LENGTH_LONG).show();
                     }
 
-                    Dialog.displayDialog(Game.this, getResources().getString(R.string.conn_error_title),
+                    if(showDialogs) Dialog.displayDialog(Game.this, getResources().getString(R.string.conn_error_title),
                             getResources().getString(R.string.conn_error_msg) + " " + stage, true);
                 }
             }
@@ -1416,7 +1507,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     // Display the error dialog if it was an unexpected termination.
                     // Otherwise, just finish the activity immediately.
                     if (errorCode != 0) {
-                        Dialog.displayDialog(Game.this, getResources().getString(R.string.conn_terminated_title),
+                         if(showDialogs) Dialog.displayDialog(Game.this, getResources().getString(R.string.conn_terminated_title),
                                 getResources().getString(R.string.conn_terminated_msg), true);
                     }
                     else {
