@@ -182,7 +182,13 @@ public class NvConnection {
             return launchNotRunningApp(h, context);
         }
     }
-
+    
+    public void quitApp() throws IOException, XmlPullParserException
+	{
+		NvHTTP h = new NvHTTP(context.serverAddress, uniqueId, null, cryptoProvider);
+		h.quitApp();
+	}
+    
     protected boolean quitAndLaunch(NvHTTP h, ConnectionContext context) throws IOException,
             XmlPullParserException {
         try {
